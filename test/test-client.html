@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Allez Middleman Test Client</title>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .error { background-color: #fff3cd; color: #856404; }
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        input, select {
+            padding: 5px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        #log {
+            height: 300px;
+            overflow-y: scroll;
+            background-color: #f8f9fa;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Allez Middleman Test Client</h1>
+    
+    <div class="container">
+        <h3>Connection</h3>
+        <div id="status" class="status disconnected">Disconnected</div>
+        <input type="text" id="serverUrl" placeholder="Server URL" value="http://localhost:3001">
+        <input type="text" id="token" placeholder="JWT Token (optional for testing)">
+        <button id="connectBtn" onclick="connect()">Connect</button>
+        <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+    </div>
+
+    <div class="container">
+        <h3>User Type</h3>
+        <select id="userType">
+            <option value="rider">Rider</option>
+            <option value="driver">Driver</option>
+        </select>
+        <input type="text" id="userId" placeholder="User ID" value="test-user-123">
+    </div>
+
+    <div class="container">
+        <h3>Trip Actions</h3>
+        <input type="text" id="tripId" placeholder="Trip ID" value="trip-123">
+        <button onclick="subscribeToTrip()" disabled id="subscribeBtn">Subscribe to Trip</button>
+        <button onclick="unsubscribeFromTrip()" disabled id="unsubscribeBtn">Unsubscribe from Trip</button>
+    </div>
+
+    <div class="container">
+        <h3>Driver Actions</h3>
+        <button onclick="toggleAvailability(true)" disabled id="availableBtn">Set Available</button>
+        <button onclick="toggleAvailability(false)" disabled id="unavailableBtn">Set Unavailable</button>
+        <input type="text" id="acceptTripId" placeholder="Trip ID to Accept" value="trip-123">
+        <button onclick="acceptTrip()" disabled id="acceptBtn">Accept Trip</button>
+    </div>
+
+    <div class="container">
+        <h3>Test Actions</h3>
+        <button onclick="sendPing()" disabled id="pingBtn">Send Ping</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <div class="container">
+        <h3>Event Log</h3>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        let socket = null;
+        let isConnected = false;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> <span style="color: ${getLogColor(type)};">${message}</span>`;
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function getLogColor(type) {
+            switch(type) {
+                case 'error': return '#dc3545';
+                case 'success': return '#28a745';
+                case 'warning': return '#ffc107';
+                default: return '#333';
+            }
+        }
+
+        function updateStatus(status, isConnected) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = status;
+            statusDiv.className = `status ${isConnected ? 'connected' : 'disconnected'}`;
+            
+            // Update button states
+            document.getElementById('connectBtn').disabled = isConnected;
+            document.getElementById('disconnectBtn').disabled = !isConnected;
+            document.getElementById('subscribeBtn').disabled = !isConnected;
+            document.getElementById('unsubscribeBtn').disabled = !isConnected;
+            document.getElementById('availableBtn').disabled = !isConnected;
+            document.getElementById('unavailableBtn').disabled = !isConnected;
+            document.getElementById('acceptBtn').disabled = !isConnected;
+            document.getElementById('pingBtn').disabled = !isConnected;
+        }
+
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const token = document.getElementById('token').value;
+            
+            if (socket) {
+                socket.disconnect();
+            }
+
+            // Create a test JWT token if none provided
+            const authToken = token || createTestToken();
+
+            socket = io(serverUrl, {
+                auth: {
+                    token: authToken
+                },
+                transports: ['websocket', 'polling']
+            });
+
+            setupEventHandlers();
+            log(`Connecting to ${serverUrl}...`);
+        }
+
+        function createTestToken() {
+            // Create a simple test token (not secure, just for testing)
+            const payload = {
+                user_id: document.getElementById('userId').value,
+                user_type: document.getElementById('userType').value,
+                email: 'test@example.com',
+                iat: Math.floor(Date.now() / 1000),
+                exp: Math.floor(Date.now() / 1000) + 3600
+            };
+            
+            // This is just for testing - in production, get real JWT from your auth system
+            return btoa(JSON.stringify(payload));
+        }
+
+        function setupEventHandlers() {
+            socket.on('connect', () => {
+                isConnected = true;
+                updateStatus('Connected', true);
+                log('Connected to server', 'success');
+            });
+
+            socket.on('disconnect', (reason) => {
+                isConnected = false;
+                updateStatus('Disconnected', false);
+                log(`Disconnected: ${reason}`, 'error');
+            });
+
+            socket.on('connect_error', (error) => {
+                log(`Connection error: ${error.message}`, 'error');
+            });
+
+            socket.on('connected', (data) => {
+                log(`Server confirmation: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('trip_status_update', (data) => {
+                log(`Trip status update: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('new_trip_request', (data) => {
+                log(`New trip request: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('trip_request_created', (data) => {
+                log(`Trip request created: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('trip_accepted', (data) => {
+                log(`Trip accepted: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('driver_location_update', (data) => {
+                log(`Driver location update: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('trip_subscribed', (data) => {
+                log(`Trip subscribed: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('trip_unsubscribed', (data) => {
+                log(`Trip unsubscribed: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('availability_updated', (data) => {
+                log(`Availability updated: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('trip_acceptance_confirmed', (data) => {
+                log(`Trip acceptance confirmed: ${JSON.stringify(data)}`, 'success');
+            });
+
+            socket.on('error', (error) => {
+                log(`Socket error: ${JSON.stringify(error)}`, 'error');
+            });
+
+            socket.on('pong', (data) => {
+                log(`Pong received: ${JSON.stringify(data)}`, 'success');
+            });
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+        }
+
+        function subscribeToTrip() {
+            const tripId = document.getElementById('tripId').value;
+            if (socket && tripId) {
+                socket.emit('subscribe_trip', { trip_id: tripId });
+                log(`Subscribing to trip: ${tripId}`);
+            }
+        }
+
+        function unsubscribeFromTrip() {
+            const tripId = document.getElementById('tripId').value;
+            if (socket && tripId) {
+                socket.emit('unsubscribe_trip', { trip_id: tripId });
+                log(`Unsubscribing from trip: ${tripId}`);
+            }
+        }
+
+        function toggleAvailability(isAvailable) {
+            if (socket) {
+                socket.emit('toggle_availability', { is_available: isAvailable });
+                log(`Setting availability to: ${isAvailable}`);
+            }
+        }
+
+        function acceptTrip() {
+            const tripId = document.getElementById('acceptTripId').value;
+            if (socket && tripId) {
+                socket.emit('accept_trip', { 
+                    trip_id: tripId,
+                    estimated_arrival: new Date(Date.now() + 10 * 60000).toISOString()
+                });
+                log(`Accepting trip: ${tripId}`);
+            }
+        }
+
+        function sendPing() {
+            if (socket) {
+                socket.emit('ping');
+                log('Sending ping...');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Initialize
+        updateStatus('Disconnected', false);
+        log('Test client loaded. Configure connection and click Connect.');
+    </script>
+</body>
+</html> 
